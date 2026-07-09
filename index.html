@@ -242,7 +242,7 @@ main{max-width:1500px;margin:0 auto;padding:16px 20px 80px}
 .sync.pending i{background:var(--brass);animation:pulse 1s infinite}
 .sync.err i{background:var(--terra)}
 @keyframes pulse{50%{opacity:.4}}
-.cmpbtn{position:absolute;top:9px;left:8px;background:none;border:none;cursor:pointer;font-size:13px;color:rgba(243,227,194,.55);z-index:2;padding:2px}
+.cmpbtn{position:absolute;bottom:6px;right:8px;background:none;border:none;cursor:pointer;font-size:13px;color:rgba(243,227,194,.55);z-index:2;padding:2px}
 .cmpbtn:hover{color:#f3e3c2;transform:scale(1.15)}
 .cmpbtn.on{color:#8fd0ff}
 .cmpbar{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:90;background:var(--maroon);color:#f3e3c2;
@@ -273,6 +273,10 @@ main{max-width:1500px;margin:0 auto;padding:16px 20px 80px}
 .sbar .tr i.own{background:var(--maroon-soft)}
 .slist{font-size:12px;color:var(--ink);line-height:1.7}
 .slist b{color:var(--brass-deep)}
+.ovgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.ov{background:var(--parch-soft);border:1px solid var(--brass-soft);border-radius:10px;padding:10px 6px;text-align:center}
+.ov b{font-family:'Marcellus',serif;font-size:22px;color:var(--maroon);display:block;font-weight:400;line-height:1.1}
+.ov span{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
 .today-reason{font-size:12px;color:var(--muted);text-align:center;margin-bottom:10px}
 @media(pointer:coarse){
   .heart{font-size:19px;padding:6px;top:5px;right:5px}
@@ -514,6 +518,7 @@ footer{text-align:center;color:var(--faint);font-size:11px;padding:24px 22px 40p
       <option value="priceDesc">Sort: Price ↓</option>
       <option value="perf">Sort: Longest lasting</option>
       <option value="rating">Sort: My rating</option>
+      <option value="value">Sort: Best value (₹/ml)</option>
     </select>
     <button class="tglbtn" id="wishTgl" title="Show wishlist only">♥ Wishlist</button>
     <button class="tglbtn" id="viewTgl" title="Toggle compact list">☰ List</button>
@@ -3398,6 +3403,10 @@ function apply(){
   if (s==="priceDesc") filtered.sort((a,b)=>minPrice(b)-minPrice(a));
   if (s==="perf") filtered.sort((a,b)=>hoursOf(b.longevity)-hoursOf(a.longevity));
   if (s==="rating") filtered.sort((a,b)=>((ratings[b.id]||{}).s||0)-((ratings[a.id]||{}).s||0));
+  if (s==="value"){
+    const rate = d => { const v = SIZES.filter(z=>z!=="BNIB"&&Number.isFinite(d.prices[z])).map(z=>d.prices[z]/parseFloat(z)); return v.length?Math.min(...v):1e9; };
+    filtered.sort((a,b)=>rate(a)-rate(b));
+  }
   document.querySelectorAll("#viewBrowse select").forEach(x=>x.classList.toggle("active", !!x.value && x.id!=="sort"));
   const pill = $("ckPill");
   if (state.ckey && groups[state.ckey]){
@@ -3763,12 +3772,16 @@ function buildStats(){
   const add = html => { const el = document.createElement("div"); el.className="statcard"; el.innerHTML = html; w.appendChild(el); };
   const leftMl = Math.max(0, totalMl - usedMl);
   const wearsLeft = Math.floor(leftMl/ML_PER_WEAR);
-  add(`<h3>Overview</h3><div class="slist">
-    <b>${owned.length}</b> decants owned · <b>${totalMl} ml</b> bought<br>
-    <b>${totWears}</b> wears logged (${SPRAYS_PER_WEAR} sprays/wear) · ~<b>${usedMl.toFixed(1)} ml</b> used (${totalMl?Math.round(usedMl/totalMl*100):0}%)<br>
-    <b>~${leftMl.toFixed(0)} ml</b> · <b>${Math.floor(leftMl*SPRAYS_PER_ML)} sprays</b> remaining<br>
-    ≈ <b>${wearsLeft} wears</b> — lasts ~<b>${Math.round(wearsLeft/30)} months</b> at 1 wear/day<br>
-    <b>${wish.size}</b> wishlisted · <b>${rated.length}</b> rated (avg ${(rated.reduce((a,r)=>a+r.s,0)/(rated.length||1)).toFixed(1)}★)</div>`);
+  const tiles = [
+    [owned.length, "decants owned"], [totalMl+" ml", "bought"],
+    ["~"+leftMl.toFixed(0)+" ml", "remaining"], [Math.floor(leftMl*SPRAYS_PER_ML), "sprays left"],
+    [wearsLeft, "wears left"], ["~"+Math.round(wearsLeft/30)+" mo", "at 1 wear/day"],
+    [totWears, "wears logged"], [usedMl.toFixed(1)+" ml", "used ("+(totalMl?Math.round(usedMl/totalMl*100):0)+"%)"],
+    [wish.size, "wishlisted"], [rated.length? (rated.reduce((a,r)=>a+r.s,0)/rated.length).toFixed(1)+"★" : "—", rated.length? rated.length+" rated" : "none rated"],
+  ];
+  add(`<h3>Overview</h3><div class="ovgrid">` +
+    tiles.map(([v,l])=>`<div class="ov"><b>${v}</b><span>${l}</span></div>`).join("") +
+    `</div><div style="font-size:10px;color:var(--faint);margin-top:8px;text-align:center">1 wear = ${SPRAYS_PER_WEAR} sprays ≈ ${ML_PER_WEAR}ml</div>`);
   const fams = Object.keys(FAM_META);
   const catN = f => SHOP.filter(d=>d.family===f).length;
   const ownN = f => owned.filter(d=>d.family===f).length;
