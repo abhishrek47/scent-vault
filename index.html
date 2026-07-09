@@ -2723,6 +2723,11 @@ let cart = lsGet("ss_cart", {});
 let wishSize = lsGet("ss_wishsize", {});   // {id: "5ml"}
 let ratings = lsGet("ss_ratings", {});     // {id: {s: 1-5, n: "note"}}
 let wears = lsGet("ss_wears", {});         // {id: {c: count, l: last-worn ms}}
+let userOwned = lsGet("ss_owned", {});     // {id: "8ml"} — decants you bought yourself
+function applyUserOwned(){
+  DATA.forEach(d=>{ if(d.baseOwned===undefined) d.baseOwned = d.owned||null;
+    d.owned = d.baseOwned || userOwned[d.id] || null; });
+}
 const ML_PER_WEAR = 0.25;                  // ≈ 2-3 sprays
 
 function setSyncDot(st){
@@ -2732,7 +2737,7 @@ function setSyncDot(st){
   el.title = st==="err" ? "Cloud sync unavailable — data saved in this browser only" : "Cloud sync: Firestore (abhishek-newsletter)";
 }
 let syncTimer = null;
-function cloudState(){ return { wish:[...wish], wishSize, cart, ratings, wears, updatedAt: Date.now() }; }
+function cloudState(){ return { wish:[...wish], wishSize, cart, ratings, wears, userOwned, updatedAt: Date.now() }; }
 function scheduleSync(){
   clearTimeout(syncTimer);
   if (!window.__cloudPush) return;
@@ -2743,7 +2748,8 @@ function save(k, v){ lsSet(k, v); lsSet("ss_updated", Date.now()); scheduleSync(
 function applyRemote(r){
   wish.clear(); (r.wish||[]).forEach(i=>wish.add(i));
   wishSize = r.wishSize||{}; cart = r.cart||{}; ratings = r.ratings||{}; wears = r.wears||{};
-  lsSet("ss_wish",[...wish]); lsSet("ss_wishsize",wishSize); lsSet("ss_cart",cart);
+  userOwned = r.userOwned||{}; applyUserOwned();
+  lsSet("ss_wish",[...wish]); lsSet("ss_wishsize",wishSize); lsSet("ss_cart",cart); lsSet("ss_owned",userOwned);
   lsSet("ss_ratings",ratings); lsSet("ss_wears",wears); lsSet("ss_updated", r.updatedAt||Date.now());
   updateWishUI(); renderCart();
   if ($("wdrawer").classList.contains("open")) renderWish();
@@ -2763,6 +2769,7 @@ function applySheetOv(){
   (sheetOv.newItems||[]).forEach(n=>{ if(!byId[n.id]){ DATA.push(n); byId[n.id]=n; } });
 }
 applySheetOv();
+applyUserOwned();
 
 /* ---------- helpers ---------- */
 function hoursOf(l){ const m=(l||"").match(/(\d+)/g); return m?Math.max(...m.map(Number)):0; }
@@ -2803,6 +2810,7 @@ function myRow(d){
       <span class="stars" title="My rating">${[1,2,3,4,5].map(v=>`<span class="star${(r.s||0)>=v?" fill":""}" data-v="${v}">★</span>`).join("")}</span>
       <button class="notebtn${r.n?" has":""}">📝 ${r.n?"Note":"Add note"}</button>
       <button class="sharebtn">📤 Share</button>
+      <button class="sharebtn ownbtn"></button>
     </div>
     ${r.n?`<div class="mynote" title="Click to edit">“${esc(r.n)}”</div>`:""}`;
   const paint = () => {
@@ -2841,7 +2849,33 @@ function myRow(d){
     wrap.appendChild(ta); ta.focus();
   };
   wrap.querySelector(".notebtn").onclick = openNote;
-  wrap.querySelector(".sharebtn").onclick = e => { e.stopPropagation(); shareCard(d); };
+  wrap.querySelectorAll(".sharebtn")[0].onclick = e => { e.stopPropagation(); shareCard(d); };
+  const ob = wrap.querySelector(".ownbtn");
+  const paintOwn = () => {
+    if (d.baseOwned){ ob.remove(); return; }
+    ob.textContent = userOwned[d.id] ? `✓ Owned ${userOwned[d.id]} · remove` : "➕ I own this";
+    ob.style.color = userOwned[d.id] ? "var(--olive)" : "";
+  };
+  paintOwn();
+  if (!d.baseOwned) ob.onclick = e => {
+    e.stopPropagation();
+    if (userOwned[d.id]){
+      delete userOwned[d.id];
+      save("ss_owned", userOwned); applyUserOwned(); rebuildOwned(); paintOwn(); updateLowBanner();
+      return;
+    }
+    if (wrap.querySelector(".ownsizes")) return;
+    const row = document.createElement("div");
+    row.className = "tagrow ownsizes";
+    const sizes = SIZES.filter(sz=>sz!=="BNIB" && (Number.isFinite(d.prices[sz]) || ["2ml","3ml","5ml","6ml","8ml","10ml"].includes(sz)));
+    row.innerHTML = `<span class="tag">size bought:</span>` + sizes.map(sz=>`<span class="price" data-sz="${sz}">${sz}</span>`).join("");
+    row.querySelectorAll("[data-sz]").forEach(b=>b.onclick = ev=>{
+      ev.stopPropagation();
+      userOwned[d.id] = b.dataset.sz;
+      save("ss_owned", userOwned); applyUserOwned(); rebuildOwned(); row.remove(); paintOwn(); updateLowBanner();
+    });
+    wrap.appendChild(row);
+  };
   const mn = wrap.querySelector(".mynote"); if (mn) mn.onclick = openNote;
   return wrap;
 }
@@ -3649,12 +3683,20 @@ async function buildToday(skip){
     if (d.owned && (!w?.l || now-w.l > 14*864e5)) sc += 1;
     return [sc + Math.random()*1.2, d];
   }).sort((a,b)=>b[0]-a[0]);
-  const pick = scored[todaySkip % Math.min(12, scored.length)][1];
+  const ownedList = scored.filter(x=>x[1].owned);
+  const exploreList = scored.filter(x=>!x[1].owned);
+  const wearPick = ownedList.length ? ownedList[todaySkip % Math.min(5, ownedList.length)][1] : null;
+  const expPick = exploreList.length ? exploreList[todaySkip % Math.min(12, exploreList.length)][1] : null;
   $("todaySec").classList.remove("hide");
   $("todayWx").textContent = `${Math.round(wx.t)}°C${wx.rain?" · rainy":""}${wx.real?"":" (seasonal estimate)"} · ${night?"evening":"daytime"}`;
-  $("todayReason").textContent = `${pick.owned ? "From your collection" : "Worth exploring"}: ${pick.family.toLowerCase()} suits ${wx.t>=28?"the heat":wx.t<20?"the cool air":"this weather"}${wx.rain?" and the rain":""}${pick.owned ? ((wears[pick.id]?.l)?"":" — and you haven't worn it yet") : ` — from ${sellerOf(pick)}, decants from ${fmt(minPrice(pick))}`}.`;
+  const wxWhy = `${wx.t>=28?"the heat":wx.t<20?"the cool air":"this weather"}${wx.rain?" and the rain":""}`;
+  $("todayReason").innerHTML =
+    (wearPick?`<b>Wear today:</b> ${esc(wearPick.name)} — ${wearPick.family.toLowerCase()} suits ${wxWhy}${(wears[wearPick.id]?.l)?"":", and it's unworn"}. `:"") +
+    (expPick?`<br><b>Explore next:</b> ${esc(expPick.name)} from ${sellerOf(expPick)}, decants from ${fmt(minPrice(expPick))}.`:"");
   const wrapEl = $("todayWrap"); wrapEl.innerHTML = "";
-  wrapEl.appendChild(card(pick));
+  wrapEl.style.maxWidth = "880px";
+  if (wearPick) wrapEl.appendChild(card(wearPick));
+  if (expPick) wrapEl.appendChild(card(expPick));
 }
 buildToday(0);
 
