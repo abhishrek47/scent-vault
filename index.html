@@ -2728,7 +2728,9 @@ function applyUserOwned(){
   DATA.forEach(d=>{ if(d.baseOwned===undefined) d.baseOwned = d.owned||null;
     d.owned = d.baseOwned || userOwned[d.id] || null; });
 }
-const ML_PER_WEAR = 0.25;                  // ≈ 2-3 sprays
+const SPRAYS_PER_ML = 10;                  // standard atomizer ≈ 0.1ml per spray
+const SPRAYS_PER_WEAR = 5.5;               // your routine: 2 collar + 2 armpits + chest
+const ML_PER_WEAR = SPRAYS_PER_WEAR / SPRAYS_PER_ML;   // ≈ 0.55ml per wear
 
 function setSyncDot(st){
   const el = $("syncDot"); if(!el) return;
@@ -2891,7 +2893,7 @@ function wearBlock(d){
     el.innerHTML = `<div class="wearhead">
         <button class="wbtn plus">+ Wear today</button>
         <button class="wbtn minus" title="Undo a wear">−</button>
-        <span class="wearinfo">${low?'<span class="lowtag">running low · </span>':""}~${left.toFixed(1)}ml left · worn ${w.c||0}×${w.l?` · last ${fmtDate(w.l)}`:""}</span>
+        <span class="wearinfo">${low?'<span class="lowtag">running low · </span>':""}~${left.toFixed(1)}ml · ${Math.floor(left*SPRAYS_PER_ML)} sprays · <b>${Math.floor(left/ML_PER_WEAR)} wears left</b>${w.l?` · last ${fmtDate(w.l)}`:""}</span>
       </div>
       <div class="wbar${low?" low":""}"><i style="width:${pct}%"></i></div>`;
     el.querySelector(".plus").onclick = e=>{ e.stopPropagation();
@@ -3336,7 +3338,8 @@ function rebuildOwned(){
   const owned = DATA.filter(d=>d.owned);
   const totalMl = owned.reduce((a,d)=>a+parseInt(d.owned),0);
   const szCount = s => owned.filter(d=>d.owned===s).length;
-  $("ownSummary").textContent = `${owned.length} decants · ${totalMl} ml total · ${szCount("8ml")}×8ml, ${szCount("5ml")}×5ml, ${szCount("3ml")}×3ml — with the community verdict on each.`;
+  const leftMl = owned.reduce((a,d)=>a+Math.max(0,parseInt(d.owned)-(wears[d.id]?.c||0)*ML_PER_WEAR),0);
+  $("ownSummary").textContent = `${owned.length} decants · ${totalMl} ml bought · ~${leftMl.toFixed(0)} ml (${Math.floor(leftMl*SPRAYS_PER_ML)} sprays) remaining ≈ ${Math.floor(leftMl/ML_PER_WEAR)} wears — about ${Math.round(leftMl/ML_PER_WEAR/30)} months at one wear a day.`;
   const main = $("ownedMain");
   const byBrand = {};
   owned.forEach(d => { const b = d.brand.trim()||"Other"; (byBrand[b]=byBrand[b]||[]).push(d); });
@@ -3758,9 +3761,13 @@ function buildStats(){
   const totWears = owned.reduce((a,d)=>a+(wears[d.id]?.c||0),0);
   const rated = Object.values(ratings).filter(r=>r.s);
   const add = html => { const el = document.createElement("div"); el.className="statcard"; el.innerHTML = html; w.appendChild(el); };
+  const leftMl = Math.max(0, totalMl - usedMl);
+  const wearsLeft = Math.floor(leftMl/ML_PER_WEAR);
   add(`<h3>Overview</h3><div class="slist">
     <b>${owned.length}</b> decants owned · <b>${totalMl} ml</b> bought<br>
-    <b>${totWears}</b> wears logged · ~<b>${usedMl.toFixed(1)} ml</b> used (${totalMl?Math.round(usedMl/totalMl*100):0}%)<br>
+    <b>${totWears}</b> wears logged (${SPRAYS_PER_WEAR} sprays/wear) · ~<b>${usedMl.toFixed(1)} ml</b> used (${totalMl?Math.round(usedMl/totalMl*100):0}%)<br>
+    <b>~${leftMl.toFixed(0)} ml</b> · <b>${Math.floor(leftMl*SPRAYS_PER_ML)} sprays</b> remaining<br>
+    ≈ <b>${wearsLeft} wears</b> — lasts ~<b>${Math.round(wearsLeft/30)} months</b> at 1 wear/day<br>
     <b>${wish.size}</b> wishlisted · <b>${rated.length}</b> rated (avg ${(rated.reduce((a,r)=>a+r.s,0)/(rated.length||1)).toFixed(1)}★)</div>`);
   const fams = Object.keys(FAM_META);
   const catN = f => SHOP.filter(d=>d.family===f).length;
@@ -3779,6 +3786,25 @@ function buildStats(){
     : "Log wears to see which decants earn their price.") + `</div>`);
   const lowConf = owned.filter(d=>!ratings[d.id]?.s).length;
   add(`<h3>To do</h3><div class="slist">${lowConf} owned decants still unrated<br>${owned.filter(d=>!(wears[d.id]?.c)).length} never worn — rotate them in<br>Wishlist total: <b>${fmt(wishCalc().total)}</b> across ${wish.size} picks</div>`);
+  add(`<h3>Backup</h3><div class="slist">All your data — wishlist, ratings, notes, wears, owned decants, cart.</div>
+    <div style="display:flex;gap:8px;margin-top:9px">
+      <button class="clonebtn" id="expBtn">⬇ Export JSON</button>
+      <button class="clonebtn ghost" id="impBtn">⬆ Import</button>
+      <input type="file" id="impFile" accept=".json" style="display:none">
+    </div>`);
+  $("expBtn").onclick = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(cloudState(),null,1)],{type:"application/json"}));
+    a.download = "scent-vault-backup-" + new Date().toISOString().slice(0,10) + ".json"; a.click();
+  };
+  $("impBtn").onclick = () => $("impFile").click();
+  $("impFile").onchange = e => {
+    const f = e.target.files[0]; if(!f) return;
+    const r = new FileReader();
+    r.onload = () => { try{ const data = JSON.parse(r.result); data.updatedAt = Date.now();
+      applyRemote(data); scheduleSync(); buildStats(); alert("Backup restored."); }catch(err){ alert("Invalid backup file"); } };
+    r.readAsText(f);
+  };
 }
 
 /* ---------- PWA ---------- */
