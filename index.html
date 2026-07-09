@@ -154,7 +154,7 @@ main{max-width:1500px;margin:0 auto;padding:16px 20px 80px}
 .card{position:relative;background:var(--parch);border:1px solid var(--brass-mid);border-radius:12px;
   display:flex;flex-direction:column;transition:.15s;box-shadow:var(--shadow);overflow:hidden}
 .card:hover{border-color:var(--brass);box-shadow:0 10px 26px rgba(163,74,42,.16)}
-.card.out{opacity:.62}
+.card.out{opacity:1}
 .arch{background:linear-gradient(160deg,#6d2a2a,var(--maroon));border-radius:0 0 46% 46% / 0 0 26px 26px;
   padding:13px 34px 13px 14px;position:relative}
 .arch .brand{font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:#d8b56a}
@@ -292,7 +292,7 @@ main{max-width:1500px;margin:0 auto;padding:16px 20px 80px}
 .row{display:grid;grid-template-columns:26px minmax(185px,1.4fr) 74px minmax(0,1.6fr) 108px 90px 20px;gap:9px;
   align-items:center;padding:8px 14px;border-bottom:1px solid var(--brass-soft);cursor:pointer;transition:.1s}
 .row:hover{background:var(--brass-soft)}
-.row.out{opacity:.55}
+.row.out{opacity:1}
 .row .heart{position:static;font-size:14px;color:#d5c3a2}
 .row .heart.on{color:var(--terra)}
 .rname{min-width:0}
@@ -385,7 +385,7 @@ footer{text-align:center;color:var(--faint);font-size:11px;padding:24px 22px 40p
   .seasons{grid-template-columns:1fr 1fr}
   .trio,.grid{grid-template-columns:1fr}
   main{padding:10px 10px 70px}
-  .toolbar{position:sticky;top:0;padding:6px 10px}
+  .toolbar{position:static;padding:6px 10px}
   select{max-width:none;flex:1 1 45%;font-size:12px;padding:8px 8px}
   .tglbtn,.reset{flex:1 1 28%}
   .card .name{font-size:17px}
@@ -457,7 +457,8 @@ footer{text-align:center;color:var(--faint);font-size:11px;padding:24px 22px 40p
     <div class="likes" id="likes"></div>
     <div class="likeall">
       <label>Or pick any original:</label>
-      <select id="allCkeys"><option value="">— choose a fragrance you know —</option></select>
+      <input id="allCkeys" list="ckeysList" placeholder="type a fragrance you know… e.g. Layton" style="background:var(--parch);border:1px solid var(--brass-mid);border-radius:8px;padding:8px 12px;font-size:13px;font-family:inherit;min-width:260px">
+      <datalist id="ckeysList"></datalist>
     </div>
   </section>
 
@@ -3068,7 +3069,7 @@ function card(d, opts={}){
   const el = document.createElement("div");
   el.className = "card" + (d.status==="out" && !opts.noStatus ? " out" : "");
   let badges = "";
-  if (d.seller) badges += `<span class="badge seller">${sellerOf(d)}</span>`;
+  if (!d.collectionOnly) badges += `<span class="badge seller">${sellerOf(d)}</span>`;
   if (d.owned) badges += `<span class="badge owned">You own · ${d.owned}</span>`;
   if (!opts.noStatus){
     if (d.status==="restocked") badges += '<span class="badge restocked">Restocked</span>';
@@ -3224,12 +3225,18 @@ gkeys.slice(0,18).forEach(k=>{
   el.onclick = () => goBrowse({ckey:k});
   $("likes").appendChild(el);
 });
+const ckeyByLabel = {};
 Object.keys(groups).sort((a,b)=>canonName(a).localeCompare(canonName(b))).forEach(k=>{
+  const label = `${canonName(k)} (${groups[k].length} clone${groups[k].length>1?"s":""})`;
+  ckeyByLabel[label] = k;
   const o = document.createElement("option");
-  o.value = k; o.textContent = `${canonName(k)} (${groups[k].length})`;
-  $("allCkeys").appendChild(o);
+  o.value = label;
+  $("ckeysList").appendChild(o);
 });
-$("allCkeys").addEventListener("change", e => { if(e.target.value) goBrowse({ckey:e.target.value}); });
+$("allCkeys").addEventListener("change", e => {
+  const k = ckeyByLabel[e.target.value];
+  if (k){ e.target.value = ""; goBrowse({ckey:k}); }
+});
 
 /* must-have OGs */
 OGS.forEach(og=>{
@@ -3619,13 +3626,13 @@ async function getWx(){
 }
 async function buildToday(skip){
   if (skip) todaySkip++;
-  const owned = DATA.filter(d=>d.owned);
-  if (!owned.length) return;
+  const pool = SHOP.filter(d=>d.status!=="out").concat(DATA.filter(d=>d.owned&&d.status==="out"));
+  if (!pool.length) return;
   const wx = window.__wx || (window.__wx = await getWx());
   const hr = new Date().getHours();
   const night = hr>=18 || hr<5;
   const now = Date.now();
-  const scored = owned.map(d=>{
+  const scored = pool.map(d=>{
     let sc = 0;
     if (wx.t>=28 && HOT_FAMS.includes(d.family)) sc += 2.5;
     if (wx.t<20 && COLD_FAMS.includes(d.family)) sc += 2.5;
@@ -3634,15 +3641,18 @@ async function buildToday(skip){
     if (night && (d.time==="night"||d.time==="versatile")) sc += 1;
     if (!night && (d.time==="day"||d.time==="versatile")) sc += 1;
     sc += ((ratings[d.id]||{}).s||0)*0.4;
+    if (d.owned) sc += 2.2;                    // prefer wearable-today, but explore beyond
+    if (d.confidence==="high") sc += 0.6;
+    if (wish.has(d.id)) sc += 0.8;
     const w = wears[d.id];
     if (w?.l && now-w.l < 3*864e5) sc -= 3;
-    if (!w?.l || now-w.l > 14*864e5) sc += 1;
-    return [sc + Math.random()*0.3, d];
+    if (d.owned && (!w?.l || now-w.l > 14*864e5)) sc += 1;
+    return [sc + Math.random()*1.2, d];
   }).sort((a,b)=>b[0]-a[0]);
-  const pick = scored[todaySkip % Math.min(5, scored.length)][1];
+  const pick = scored[todaySkip % Math.min(12, scored.length)][1];
   $("todaySec").classList.remove("hide");
   $("todayWx").textContent = `${Math.round(wx.t)}°C${wx.rain?" · rainy":""}${wx.real?"":" (seasonal estimate)"} · ${night?"evening":"daytime"}`;
-  $("todayReason").textContent = `From your collection: ${pick.family.toLowerCase()} suits ${wx.t>=28?"the heat":wx.t<20?"the cool air":"this weather"}${wx.rain?" and the rain":""}${(wears[pick.id]?.l)?"":" — and you haven't worn it yet"}.`;
+  $("todayReason").textContent = `${pick.owned ? "From your collection" : "Worth exploring"}: ${pick.family.toLowerCase()} suits ${wx.t>=28?"the heat":wx.t<20?"the cool air":"this weather"}${wx.rain?" and the rain":""}${pick.owned ? ((wears[pick.id]?.l)?"":" — and you haven't worn it yet") : ` — from ${sellerOf(pick)}, decants from ${fmt(minPrice(pick))}`}.`;
   const wrapEl = $("todayWrap"); wrapEl.innerHTML = "";
   wrapEl.appendChild(card(pick));
 }
