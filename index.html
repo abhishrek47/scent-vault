@@ -2775,6 +2775,12 @@ function applyRemote(r){
   if ($("wdrawer").classList.contains("open")) renderWish();
   rebuildOwned(); apply();
 }
+window.__clearLocal = () => {
+  ["ss_wish","ss_wishsize","ss_cart","ss_ratings","ss_wears","ss_owned","ss_updated"].forEach(k=>{ try{localStorage.removeItem(k);}catch(e){} });
+  wish.clear(); wishSize = {}; cart = {}; ratings = {}; wears = {}; userOwned = {};
+  lsSet("ss_own_migrated", true);
+  applyUserOwned(); updateWishUI(); renderCart(); rebuildOwned(); apply();
+};
 window.__cloudState = cloudState;
 window.__applyRemote = applyRemote;
 window.__localUpdatedAt = () => lsGet("ss_updated", 0);
@@ -3353,6 +3359,8 @@ rollDice();
 function rebuildOwned(){
   $("ownedMain").innerHTML = "";
   const owned = DATA.filter(d=>d.owned);
+  const so = $("stOwned"); if (so) so.textContent = owned.length;
+  try { todaySkip = 0; buildToday(0); } catch(e) {}   /* not yet defined at boot */
   const totalMl = owned.reduce((a,d)=>a+parseInt(d.owned),0);
   const szCount = s => owned.filter(d=>d.owned===s).length;
   const leftMl = owned.reduce((a,d)=>a+Math.max(0,parseInt(d.owned)-(wears[d.id]?.c||0)*ML_PER_WEAR),0);
@@ -3892,12 +3900,18 @@ try{
   window.__signIn = () => signInWithPopup(auth, new GoogleAuthProvider())
     .catch(e => alert("Sign-in failed: " + (e.code||e.message)));
   window.__signOut = () => signOut(auth);
-  let unsub = null;
+  let unsub = null, lastUid;
   onAuthStateChanged(auth, async user => {
     if (unsub){ unsub(); unsub = null; }
     window.__cloudPush = null;
     window.__setAuthUI(user ? {name: user.displayName} : null);
-    if (!user){ window.__setSyncDot("off"); return; }
+    if (!user){
+      if (lastUid) window.__clearLocal();          // signed out on this device: wipe local copy
+      lastUid = null;
+      window.__setSyncDot("off"); return;
+    }
+    if (lastUid && lastUid !== user.uid) window.__clearLocal();   // account switch: no data bleed
+    lastUid = user.uid;
     const ref = doc(db, "sovereign_scents", "u_" + user.uid);
     window.__cloudPush = async (data) => {
       try { await setDoc(ref, data); window.__setSyncDot("ok"); }
